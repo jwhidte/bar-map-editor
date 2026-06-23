@@ -113,22 +113,22 @@ impl CanvasState {
         ((screen.to_vec2() - self.offset) / self.zoom).to_pos2()
     }
 
-    /// Apply a zoom step while keeping the world point currently under
-    /// `cursor` (a screen position) fixed on screen. `factor` multiplies
-    /// the current zoom; the result is clamped to
-    /// [`MIN_ZOOM`, `MAX_ZOOM`]. `offset` is adjusted so the cursor
-    /// stays anchored: from `screen = world*zoom + offset`, holding
-    /// `world` and `screen` fixed gives
-    /// `offset += world * (old_zoom - new_zoom)`.
-    pub fn zoom_at(&mut self, cursor: egui::Pos2, factor: f32) {
-        let old_zoom = self.zoom;
-        let new_zoom = (old_zoom * factor).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
-        if new_zoom == old_zoom {
+    /// Set zoom to `target` (clamped to [`MIN_ZOOM`, `MAX_ZOOM`]) while
+    /// keeping the world point under `anchor` (a screen position) fixed
+    /// on screen. This is the one place the zoom↔pan relationship lives:
+    /// from `screen = world*zoom + offset`, holding `world` and the
+    /// anchor's `screen` fixed gives `offset += world * (old - new)`.
+    /// Scroll-zoom and reset both go through here so the anchor rule is
+    /// identical for both.
+    pub fn zoom_to(&mut self, anchor: egui::Pos2, target: f32) {
+        let old = self.zoom;
+        let new = target.clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
+        if new == old {
             return;
         }
-        let world = self.to_world(cursor).to_vec2();
-        self.zoom = new_zoom;
-        self.offset += world * (old_zoom - new_zoom);
+        let world = self.to_world(anchor).to_vec2();
+        self.zoom = new;
+        self.offset += world * (old - new);
     }
 }
 
@@ -161,29 +161,42 @@ mod tests {
     }
 
     #[test]
-    fn zoom_at_keeps_cursor_point_anchored() {
+    fn zoom_to_keeps_anchor_point_fixed() {
         let mut state = CanvasState {
             offset: egui::vec2(60.0, 90.0),
             ..Default::default()
         };
-        let cursor = egui::pos2(300.0, 220.0);
-        let world_under_cursor = state.to_world(cursor);
-        state.zoom_at(cursor, 1.3);
-        // The same world point must still project to the cursor pixel.
-        let after = state.to_screen(world_under_cursor);
-        assert!((after - cursor).length() < 1e-3, "{after:?} != {cursor:?}");
+        let anchor = egui::pos2(300.0, 220.0);
+        let world_under_anchor = state.to_world(anchor);
+        state.zoom_to(anchor, 1.3);
+        // The same world point must still project to the anchor pixel.
+        let after = state.to_screen(world_under_anchor);
+        assert!((after - anchor).length() < 1e-3, "{after:?} != {anchor:?}");
     }
 
     #[test]
-    fn zoom_at_clamps_to_bounds() {
+    fn reset_zoom_returns_to_one_and_holds_anchor() {
+        let mut state = CanvasState {
+            offset: egui::vec2(-30.0, 200.0),
+            zoom: 2.2,
+            ..Default::default()
+        };
+        let anchor = egui::pos2(400.0, 300.0);
+        let world_under_anchor = state.to_world(anchor);
+        state.zoom_to(anchor, 1.0);
+        assert_eq!(state.zoom, 1.0);
+        // Whatever was under the anchor (e.g. the viewport centre) stays
+        // under it after the reset.
+        let after = state.to_screen(world_under_anchor);
+        assert!((after - anchor).length() < 1e-3, "{after:?} != {anchor:?}");
+    }
+
+    #[test]
+    fn zoom_to_clamps_to_bounds() {
         let mut state = CanvasState::default();
-        for _ in 0..50 {
-            state.zoom_at(egui::pos2(100.0, 100.0), 1.3);
-        }
+        state.zoom_to(egui::pos2(100.0, 100.0), 99.0);
         assert!(state.zoom <= CanvasState::MAX_ZOOM + 1e-6);
-        for _ in 0..100 {
-            state.zoom_at(egui::pos2(100.0, 100.0), 0.7);
-        }
+        state.zoom_to(egui::pos2(100.0, 100.0), 0.001);
         assert!(state.zoom >= CanvasState::MIN_ZOOM - 1e-6);
     }
 }

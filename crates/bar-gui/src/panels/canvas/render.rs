@@ -146,25 +146,22 @@ impl BarEditorApp {
             self.canvas.offset += response.drag_delta();
         }
 
-        // Scroll-wheel zoom, anchored on the cursor so the point under
-        // the pointer stays put. Mirrors the Layout sub-canvas
-        // (`properties_canvas.rs`): a per-notch factor clamped to a
-        // gentle range keeps perceived speed even across zoom levels.
-        // The new zoom takes effect next frame (same one-frame lag as
-        // pan above, which captured `offset`/`zoom` before this block).
+        // Scroll-wheel zoom and `0`-to-reset, both anchored on the
+        // viewport centre so the graph scales symmetrically in place
+        // rather than drifting toward the cursor or a stale pan. A
+        // per-notch factor clamped to a gentle range keeps perceived
+        // speed even across zoom levels. The new zoom takes effect next
+        // frame (same one-frame lag as the pan above, which captured
+        // `offset`/`zoom` before this block).
         if response.hovered() {
+            let centre = canvas_rect.center();
             let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                if let Some(cursor) = response.hover_pos() {
-                    let factor = (1.0 + scroll * 0.0015).clamp(0.7, 1.4);
-                    self.canvas.zoom_at(cursor, factor);
-                }
+                let factor = (1.0 + scroll * 0.0015).clamp(0.7, 1.4);
+                self.canvas.zoom_to(centre, self.canvas.zoom * factor);
             }
-            // Reset zoom to 1.0 with the `0` key while the canvas is
-            // hovered -- a quick escape from an extreme zoom. Pan is
-            // left untouched so the user keeps their place.
             if ui.ctx().input(|i| i.key_pressed(egui::Key::Num0)) {
-                self.canvas.zoom = 1.0;
+                self.canvas.zoom_to(centre, 1.0);
             }
         }
 
