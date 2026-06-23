@@ -83,16 +83,16 @@ impl BarEditorApp {
         // current bounding-rect top-left to avoid yanking nodes
         // away from external connections.
         let origin = if layout_everything && self.canvas.rect_last.is_positive() {
-            // canvas_rect_last is in screen space; node positions
-            // are world space. World = screen - canvas_offset. A
-            // 40 px screen margin keeps the layout off the very
-            // edge of the canvas where it'd butt against the
-            // palette / scrollbar.
+            // canvas_rect_last is in screen space; node positions are
+            // world space. `to_world` applies World = (screen - offset)
+            // / zoom, so the layout lands on screen at any zoom. A 40 px
+            // screen margin keeps it off the very edge of the canvas
+            // where it'd butt against the palette / scrollbar.
             const VIEWPORT_MARGIN: f32 = 40.0;
-            egui::pos2(
-                self.canvas.rect_last.left() + VIEWPORT_MARGIN - self.canvas.offset.x,
-                self.canvas.rect_last.top() + VIEWPORT_MARGIN - self.canvas.offset.y,
-            )
+            self.canvas.to_world(egui::pos2(
+                self.canvas.rect_last.left() + VIEWPORT_MARGIN,
+                self.canvas.rect_last.top() + VIEWPORT_MARGIN,
+            ))
         } else {
             target_units
                 .iter()
@@ -338,19 +338,24 @@ impl BarEditorApp {
         node_id: NodeId,
         port_name: &str,
         offset: egui::Vec2,
+        zoom: f32,
     ) -> Option<egui::Pos2> {
         let node = self.graph.get_node(node_id)?;
         let visual = self.visuals.node_visuals.get(&node_id)?;
         let port_index = node.outputs.iter().position(|p| p.name == port_name)?;
         let node_rect = egui::Rect::from_min_size(
-            egui::pos2(visual.position.x + offset.x, visual.position.y + offset.y),
-            visual.size,
+            egui::pos2(
+                visual.position.x * zoom + offset.x,
+                visual.position.y * zoom + offset.y,
+            ),
+            visual.size * zoom,
         );
         Some(node_port_pos(
             &node.node_type,
             node_rect,
             PortPlacement::Right,
             port_index,
+            zoom,
         ))
     }
 

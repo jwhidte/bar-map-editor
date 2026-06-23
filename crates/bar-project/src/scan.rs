@@ -524,6 +524,7 @@ pub fn scan_to_project(scan: &WorkDirScan) -> (Project, Vec<PendingAsset>, Vec<P
         node_positions,
         node_sizes,
         canvas_offset: (0.0, 0.0),
+        canvas_zoom: 1.0,
         groups: Vec::new(),
         open_tabs: Vec::new(),
         active_tab: 0,

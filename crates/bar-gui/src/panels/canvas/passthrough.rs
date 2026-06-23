@@ -111,11 +111,16 @@ pub(crate) fn draw_passthrough_body(
     painter: &egui::Painter,
     node_rect: egui::Rect,
     files: &[(String, String)],
+    zoom: f32,
 ) {
-    let body_top = node_rect.min.y + 24.0;
-    let body_bottom = node_rect.max.y - 4.0;
-    let body_left = node_rect.min.x + 6.0;
-    let line_height = 13.0;
+    // node_rect is already scaled by zoom; the body insets, line
+    // pitch, and font sizes scale by the same factor so the file
+    // listing fills the node consistently at any zoom.
+    let body_top = node_rect.min.y + 24.0 * zoom;
+    let body_bottom = node_rect.max.y - 4.0 * zoom;
+    let body_left = node_rect.min.x + 6.0 * zoom;
+    let line_height = 13.0 * zoom;
+    let font_size = 10.0 * zoom;
     let text_color = egui::Color32::from_rgb(190, 190, 190);
     let dir_color = egui::Color32::from_rgb(140, 190, 255);
 
@@ -127,10 +132,10 @@ pub(crate) fn draw_passthrough_body(
 
     if files.is_empty() {
         p.text(
-            egui::pos2(body_left, body_top + 2.0),
+            egui::pos2(body_left, body_top + 2.0 * zoom),
             egui::Align2::LEFT_TOP,
             "No files",
-            egui::FontId::proportional(10.0),
+            egui::FontId::proportional(font_size),
             egui::Color32::GRAY,
         );
         return;
@@ -159,7 +164,7 @@ pub(crate) fn draw_passthrough_body(
                 egui::pos2(body_left, y),
                 egui::Align2::LEFT_TOP,
                 "…",
-                egui::FontId::monospace(10.0),
+                egui::FontId::monospace(font_size),
                 text_color,
             );
             break;
@@ -169,7 +174,7 @@ pub(crate) fn draw_passthrough_body(
                 egui::pos2(body_left, y),
                 egui::Align2::LEFT_TOP,
                 format!("▸ {}/", dir),
-                egui::FontId::monospace(10.0),
+                egui::FontId::monospace(font_size),
                 dir_color,
             );
             y += line_height;
@@ -177,7 +182,7 @@ pub(crate) fn draw_passthrough_body(
         let indent = if dir.is_empty() {
             body_left
         } else {
-            body_left + 8.0
+            body_left + 8.0 * zoom
         };
         for name in names {
             if y + line_height > body_bottom {
@@ -185,7 +190,7 @@ pub(crate) fn draw_passthrough_body(
                     egui::pos2(indent, y),
                     egui::Align2::LEFT_TOP,
                     "…",
-                    egui::FontId::monospace(10.0),
+                    egui::FontId::monospace(font_size),
                     text_color,
                 );
                 break 'outer;
@@ -194,7 +199,7 @@ pub(crate) fn draw_passthrough_body(
                 egui::pos2(indent, y),
                 egui::Align2::LEFT_TOP,
                 name.as_str(),
-                egui::FontId::monospace(10.0),
+                egui::FontId::monospace(font_size),
                 text_color,
             );
             y += line_height;

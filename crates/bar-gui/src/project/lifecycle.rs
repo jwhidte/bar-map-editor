@@ -126,11 +126,12 @@ impl BarEditorApp {
         // Preview / export state -- run pulses and export status all reset together.
         self.preview.reset();
 
-        // Canvas viewport — pan offset and the cached canvas rect
-        // from the previous project's layout would land the new
-        // graph in the wrong viewport. apply_project re-installs
+        // Canvas viewport — pan offset, zoom, and the cached canvas
+        // rect from the previous project's layout would land the new
+        // graph in the wrong viewport / scale. apply_project re-installs
         // the saved offset AFTER this reset for loaded projects.
         self.canvas.offset = egui::Vec2::ZERO;
+        self.canvas.zoom = 1.0;
         self.canvas.rect_last = egui::Rect::NOTHING;
 
         // Tabs — only the Main tab survives a project switch; any
@@ -700,10 +701,16 @@ impl BarEditorApp {
         self.graph = graph;
 
         // Install per-project layout, overriding reset_project's
-        // zero-offset default.
+        // zero-offset / unit-zoom defaults. Zoom is clamped on load so a
+        // hand-edited or corrupt `.barproj` can't install an out-of-range
+        // (or zero) factor that would break the canvas transform.
         self.canvas.offset = egui::vec2(
             project.layout.canvas_offset.0,
             project.layout.canvas_offset.1,
+        );
+        self.canvas.zoom = project.layout.canvas_zoom.clamp(
+            crate::editor::CanvasState::MIN_ZOOM,
+            crate::editor::CanvasState::MAX_ZOOM,
         );
         self.map.width = project.recipe.output.width;
         self.map.height = project.recipe.output.height;

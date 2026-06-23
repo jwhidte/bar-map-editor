@@ -85,15 +85,17 @@ impl BarEditorApp {
                 ));
                 // IO nodes drop at their tag size so the ghost
                 // matches; other node types use the generic 150×60
-                // preview rect.
+                // preview rect. Scaled by the canvas zoom so the ghost
+                // matches the size the node will render at once dropped.
+                let zoom = self.canvas.zoom;
                 let is_io_input = matches!(drag.kind, PaletteKind::Node(NodeType::SubgraphInput));
                 let is_io_output = matches!(drag.kind, PaletteKind::Node(NodeType::SubgraphOutput));
                 let is_io = is_io_input || is_io_output;
-                let ghost_size = if is_io {
+                let ghost_size = (if is_io {
                     IO_NODE_SIZE
                 } else {
                     egui::vec2(150.0, 60.0)
-                };
+                }) * zoom;
                 let ghost_rect =
                     egui::Rect::from_min_size(pos + egui::vec2(10.0, 10.0), ghost_size);
                 let is_over_canvas =
@@ -179,7 +181,7 @@ impl BarEditorApp {
                     );
                     let title_rect = egui::Rect::from_min_size(
                         ghost_rect.min,
-                        egui::vec2(ghost_rect.width(), 20.0),
+                        egui::vec2(ghost_rect.width(), 20.0 * zoom),
                     );
                     let title_color = match &drag.kind {
                         PaletteKind::Node(t) => node_type_color(t),
@@ -199,7 +201,7 @@ impl BarEditorApp {
                         title_rect.center(),
                         egui::Align2::CENTER_CENTER,
                         &drag.label,
-                        egui::FontId::proportional(12.0),
+                        egui::FontId::proportional(12.0 * zoom),
                         egui::Color32::WHITE,
                     );
                 }
@@ -223,9 +225,9 @@ impl BarEditorApp {
             if let Some(drag) = self.palette_drag.take() {
                 if let Some(pos) = ctx.pointer_latest_pos() {
                     if self.canvas.rect_last.is_positive() && self.canvas.rect_last.contains(pos) {
-                        // Convert screen position → graph-space (accounts for canvas pan)
-                        let graph_pos = pos - self.canvas.offset;
-                        let drop_at = egui::pos2(graph_pos.x, graph_pos.y);
+                        // Convert screen position → graph-space
+                        // (accounts for canvas pan and zoom).
+                        let drop_at = self.canvas.to_world(pos);
                         match drag.kind {
                             PaletteKind::Node(t) => {
                                 self.add_node_at(t, &drag.label, drop_at);

@@ -25,7 +25,13 @@ pub struct Project {
 }
 
 /// Editor visual state that isn't part of the pipeline logic.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `Default` is implemented by hand rather than derived so `canvas_zoom`
+/// defaults to `1.0` (identity) instead of `0.0`. A zero zoom would be
+/// invalid — it collapses the graph and divides by zero in the
+/// canvas-to-world transform — so neither a missing field nor a
+/// default-constructed layout may produce it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditorLayout {
     /// Node positions keyed by their recipe key.
     #[serde(default)]
@@ -36,6 +42,10 @@ pub struct EditorLayout {
     /// Canvas pan offset.
     #[serde(default)]
     pub canvas_offset: (f32, f32),
+    /// Canvas zoom factor (graph units → screen pixels). Defaults to
+    /// `1.0` so saves predating zoom support open at identity scale.
+    #[serde(default = "default_canvas_zoom")]
+    pub canvas_zoom: f32,
     /// Visual node groupings. Purely organisational — they don't change
     /// graph topology or evaluation. The chip-style "subgraph as a
     /// reusable component" model lives at a separate layer once it
@@ -53,6 +63,26 @@ pub struct EditorLayout {
     /// `open_tabs + 1`.
     #[serde(default)]
     pub active_tab: u32,
+}
+
+/// Default canvas zoom (`1.0` = identity). Used by serde for saves that
+/// predate the zoom field and by `EditorLayout`'s `Default` impl.
+fn default_canvas_zoom() -> f32 {
+    1.0
+}
+
+impl Default for EditorLayout {
+    fn default() -> Self {
+        Self {
+            node_positions: HashMap::new(),
+            node_sizes: HashMap::new(),
+            canvas_offset: (0.0, 0.0),
+            canvas_zoom: default_canvas_zoom(),
+            groups: Vec::new(),
+            open_tabs: Vec::new(),
+            active_tab: 0,
+        }
+    }
 }
 
 /// Persisted form of a canvas tab. SubGraphs are referenced by stable
@@ -261,6 +291,7 @@ mod tests {
             .node_positions
             .insert("perlin".to_string(), Position { x: 100.0, y: 200.0 });
         project.layout.canvas_offset = (50.0, -30.0);
+        project.layout.canvas_zoom = 1.75;
         project.recipe.output.width = 512;
         project.recipe.output.height = 512;
 
@@ -273,8 +304,19 @@ mod tests {
         assert_eq!(loaded.recipe.name, project.recipe.name);
         assert_eq!(loaded.recipe.nodes.len(), project.recipe.nodes.len());
         assert_eq!(loaded.layout.canvas_offset, (50.0, -30.0));
+        assert_eq!(loaded.layout.canvas_zoom, 1.75);
         assert_eq!(loaded.recipe.output.width, 512);
         assert!(loaded.layout.node_positions.contains_key("perlin"));
+    }
+
+    #[test]
+    fn editor_layout_defaults_zoom_to_one() {
+        // Saves predating the zoom field (and any default-constructed
+        // layout) must open at identity scale, never the invalid 0.0.
+        assert_eq!(EditorLayout::default().canvas_zoom, 1.0);
+        let without_zoom = r#"{ "canvas_offset": [10.0, 20.0] }"#;
+        let layout: EditorLayout = serde_json::from_str(without_zoom).unwrap();
+        assert_eq!(layout.canvas_zoom, 1.0);
     }
 
     #[test]

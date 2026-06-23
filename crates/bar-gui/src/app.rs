@@ -44,11 +44,18 @@ pub(crate) const IO_REF_H: f32 = 52.0;
 ///   Left / Right -- stacked at PORT_Y_BASE + side_index * PORT_Y_STEP
 ///   Top(slot)    -- fixed X slot on the top edge (centered vertically)
 ///   Bottom       -- centered on the bottom edge
+///
+/// `zoom` is the canvas zoom factor: `node_rect` is already in screen
+/// space (its size scaled by zoom), so the fixed pixel offsets that
+/// stack ports below the title bar must scale by the same factor or the
+/// port handles drift off the (scaled) node body. At `zoom == 1.0` this
+/// reduces to the original fixed-offset layout.
 pub(crate) fn node_port_pos(
     node_type: &NodeType,
     node_rect: egui::Rect,
     placement: PortPlacement,
     side_index: usize,
+    zoom: f32,
 ) -> egui::Pos2 {
     if matches!(
         node_type,
@@ -63,14 +70,14 @@ pub(crate) fn node_port_pos(
     match placement {
         PortPlacement::Left => egui::pos2(
             node_rect.min.x,
-            node_rect.min.y + PORT_Y_BASE + side_index as f32 * PORT_Y_STEP,
+            node_rect.min.y + (PORT_Y_BASE + side_index as f32 * PORT_Y_STEP) * zoom,
         ),
         PortPlacement::Right => egui::pos2(
             node_rect.max.x,
-            node_rect.min.y + PORT_Y_BASE + side_index as f32 * PORT_Y_STEP,
+            node_rect.min.y + (PORT_Y_BASE + side_index as f32 * PORT_Y_STEP) * zoom,
         ),
         PortPlacement::Top(slot) => egui::pos2(
-            node_rect.min.x + TOP_PORT_INSET + slot as f32 * TOP_PORT_STEP,
+            node_rect.min.x + (TOP_PORT_INSET + slot as f32 * TOP_PORT_STEP) * zoom,
             node_rect.min.y,
         ),
         PortPlacement::Bottom => egui::pos2(node_rect.center().x, node_rect.max.y),

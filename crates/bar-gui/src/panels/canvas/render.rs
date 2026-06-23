@@ -91,8 +91,20 @@ impl BarEditorApp {
 
         let painter = ui.painter_at(canvas_rect);
 
-        // Draw grid
-        let grid_spacing = 30.0;
+        // Canvas → screen transform for this frame. `offset` (pan) and
+        // `zoom` are captured once so every node / port / wire / group
+        // position is mapped consistently: `screen = world * zoom +
+        // offset`. The `to_screen` closure borrows only these Copy
+        // locals, so it can be used freely inside the borrow-heavy
+        // draw loops below without touching `self`.
+        let offset = self.canvas.offset;
+        let zoom = self.canvas.zoom;
+        let to_screen =
+            |world: egui::Pos2| egui::pos2(world.x * zoom + offset.x, world.y * zoom + offset.y);
+
+        // Draw grid. Spacing scales with zoom so the backdrop reads as
+        // part of the zoomed content rather than a fixed overlay.
+        let grid_spacing = 30.0 * zoom;
         let grid_color = ui
             .visuals()
             .widgets
@@ -101,7 +113,6 @@ impl BarEditorApp {
             .color
             .linear_multiply(0.2);
 
-        let offset = self.canvas.offset;
         let grid_offset_x = offset.x % grid_spacing;
         let grid_offset_y = offset.y % grid_spacing;
 
@@ -133,6 +144,28 @@ impl BarEditorApp {
             || response.dragged_by(egui::PointerButton::Middle)
         {
             self.canvas.offset += response.drag_delta();
+        }
+
+        // Scroll-wheel zoom, anchored on the cursor so the point under
+        // the pointer stays put. Mirrors the Layout sub-canvas
+        // (`properties_canvas.rs`): a per-notch factor clamped to a
+        // gentle range keeps perceived speed even across zoom levels.
+        // The new zoom takes effect next frame (same one-frame lag as
+        // pan above, which captured `offset`/`zoom` before this block).
+        if response.hovered() {
+            let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+            if scroll.abs() > 0.0 {
+                if let Some(cursor) = response.hover_pos() {
+                    let factor = (1.0 + scroll * 0.0015).clamp(0.7, 1.4);
+                    self.canvas.zoom_at(cursor, factor);
+                }
+            }
+            // Reset zoom to 1.0 with the `0` key while the canvas is
+            // hovered -- a quick escape from an extreme zoom. Pan is
+            // left untouched so the user keeps their place.
+            if ui.ctx().input(|i| i.key_pressed(egui::Key::Num0)) {
+                self.canvas.zoom = 1.0;
+            }
         }
 
         // Click on empty space to deselect (suppress when palette drag
@@ -209,10 +242,8 @@ impl BarEditorApp {
                     if !in_scope {
                         continue;
                     }
-                    let r = egui::Rect::from_min_size(
-                        egui::pos2(visual.position.x + offset.x, visual.position.y + offset.y),
-                        visual.size,
-                    );
+                    let r =
+                        egui::Rect::from_min_size(to_screen(visual.position), visual.size * zoom);
                     if marquee.intersects(r) {
                         hits.push(*id);
                     }
@@ -291,7 +322,7 @@ impl BarEditorApp {
 
         // Draw group rectangles BEHIND connections + nodes so the
         // grouping reads as a backdrop, not a foreground decoration.
-        self.draw_groups(&painter, offset);
+        self.draw_groups(&painter, offset, zoom);
 
         // Group hit-testing on the cached rects from the previous
         // draw_groups frame: clicking a group header selects the group;
@@ -346,7 +377,8 @@ impl BarEditorApp {
                 None
             };
             if let Some(r) = drag_resp {
-                let delta = r.drag_delta();
+                // Screen-space drag → world-space member movement.
+                let delta = r.drag_delta() / zoom;
                 if let Some(g) = self.visuals.groups.get(&gid) {
                     let ids: Vec<NodeId> = g.member_ids.iter().copied().collect();
                     for id in ids {
@@ -416,7 +448,7 @@ impl BarEditorApp {
         // Compute the layout of every collapsed subgraph upfront so
         // wires can reroute through their external port handles when
         // an endpoint is on a hidden inner node that's bound to one.
-        let (_collapsed_rects_pre, subgraph_handles) = self.collapsed_subgraph_layout(offset);
+        let (_collapsed_rects_pre, subgraph_handles) = self.collapsed_subgraph_layout(offset, zoom);
         let hidden_for_wires = self.hidden_nodes_this_frame();
         let connections_snapshot = self.graph.connections().to_vec();
         let mut wire_polylines: Vec<((PortId, PortId), Vec<egui::Pos2>)> = Vec::new();
@@ -443,14 +475,15 @@ impl BarEditorApp {
                             .iter()
                             .position(|p| p.name == conn.from.port_name)?;
                         let node_rect = egui::Rect::from_min_size(
-                            egui::pos2(visual.position.x + offset.x, visual.position.y + offset.y),
-                            visual.size,
+                            to_screen(visual.position),
+                            visual.size * zoom,
                         );
                         Some(node_port_pos(
                             &node.node_type,
                             node_rect,
                             PortPlacement::Right,
                             out_idx,
+                            zoom,
                         ))
                     })
             };
@@ -483,10 +516,11 @@ impl BarEditorApp {
                             0
                         };
                         let node_rect = egui::Rect::from_min_size(
-                            egui::pos2(visual.position.x + offset.x, visual.position.y + offset.y),
-                            visual.size,
+                            to_screen(visual.position),
+                            visual.size * zoom,
                         );
-                        let pos = node_port_pos(&node.node_type, node_rect, placement, side_idx);
+                        let pos =
+                            node_port_pos(&node.node_type, node_rect, placement, side_idx, zoom);
                         Some((pos, placement))
                     });
                 match result {
@@ -717,9 +751,7 @@ impl BarEditorApp {
             };
             // All borrows on self.graph and self.visuals.node_visuals released here.
 
-            let node_pos = node_pos_raw + offset;
-            let node_rect =
-                egui::Rect::from_min_size(egui::pos2(node_pos.x, node_pos.y), node_size);
+            let node_rect = egui::Rect::from_min_size(to_screen(node_pos_raw), node_size * zoom);
 
             if !canvas_rect.intersects(node_rect) {
                 continue;
@@ -810,7 +842,7 @@ impl BarEditorApp {
                 } else {
                     io_border_base.gamma_multiply(node_fade)
                 };
-                let border_width = if is_selected { 2.0 } else { 1.5 };
+                let border_width = (if is_selected { 2.0 } else { 1.5 }) * zoom;
                 let mid_y = node_rect.center().y;
 
                 let outline_pts = build_io_outline(node_rect, chevron_w, body_radius, is_io_input);
@@ -880,7 +912,15 @@ impl BarEditorApp {
                     io_label_sec,
                 );
             } else {
-                let ns = NodeStyle::from_visuals(ui.visuals());
+                // Scale the node-body geometry (corner radius, title
+                // height, border widths) by zoom so the chrome grows /
+                // shrinks in lock-step with the node rect. Colours are
+                // zoom-independent.
+                let mut ns = NodeStyle::from_visuals(ui.visuals());
+                ns.rounding *= zoom;
+                ns.title_h *= zoom;
+                ns.border_w *= zoom;
+                ns.border_w_sel *= zoom;
                 // Node background — slightly lighter when in the multi-
                 // selection, even lighter for the primary so the user can
                 // tell which one's properties are showing.
@@ -909,7 +949,7 @@ impl BarEditorApp {
                 // Node title bar -- inset by TITLE_Y_OFFSET so the top-port
                 // circles (centered on node_rect.min.y) don't overlap the text.
                 let title_rect = egui::Rect::from_min_size(
-                    egui::pos2(node_rect.min.x, node_rect.min.y + TITLE_Y_OFFSET),
+                    egui::pos2(node_rect.min.x, node_rect.min.y + TITLE_Y_OFFSET * zoom),
                     egui::vec2(node_rect.width(), ns.title_h),
                 );
                 let title_color = node_type_color(&node_type).gamma_multiply(node_fade);
@@ -918,7 +958,7 @@ impl BarEditorApp {
                     title_rect.center(),
                     egui::Align2::CENTER_CENTER,
                     &node_label,
-                    egui::FontId::proportional(12.0),
+                    egui::FontId::proportional(12.0 * zoom),
                     egui::Color32::WHITE,
                 );
             }
@@ -930,8 +970,11 @@ impl BarEditorApp {
             // edge) would also fire `drag_started_by(Primary)` on
             // the canvas behind it — the user would see the marquee
             // and the connection-start fire simultaneously.
-            let port_radius = 5.0;
-            let hit_size = egui::vec2(14.0, 14.0);
+            let port_radius = 5.0 * zoom;
+            // Hit target stays a comfortable size at small zoom (so
+            // ports remain clickable when zoomed out) but never shrinks
+            // below the visual handle.
+            let hit_size = egui::Vec2::splat((14.0 * zoom).max(10.0));
             let mut left_port_idx = 0_usize;
             for (i, input) in node_inputs.iter().enumerate() {
                 // SubgraphInput's input is the EXTERNAL side, only ever
@@ -941,7 +984,7 @@ impl BarEditorApp {
                     continue;
                 }
                 let placement = PortPlacement::for_input(input.kind);
-                let port_pos = node_port_pos(&node_type, node_rect, placement, left_port_idx);
+                let port_pos = node_port_pos(&node_type, node_rect, placement, left_port_idx, zoom);
                 if matches!(placement, PortPlacement::Left) {
                     left_port_idx += 1;
                 }
@@ -969,10 +1012,10 @@ impl BarEditorApp {
                 if !is_io {
                     if matches!(placement, PortPlacement::Left) {
                         painter.text(
-                            egui::pos2(port_pos.x + 10.0, port_pos.y),
+                            egui::pos2(port_pos.x + 10.0 * zoom, port_pos.y),
                             egui::Align2::LEFT_CENTER,
                             &input.label,
-                            egui::FontId::proportional(10.0),
+                            egui::FontId::proportional(10.0 * zoom),
                             port_label_col,
                         );
                     } else {
@@ -1032,7 +1075,7 @@ impl BarEditorApp {
                             },
                         );
                         if let Some(src_pos) =
-                            self.output_port_screen_pos(src_node, &src_port, offset)
+                            self.output_port_screen_pos(src_node, &src_port, offset, zoom)
                         {
                             connection_start = Some(DragConnection {
                                 from_node: src_node,
@@ -1051,7 +1094,7 @@ impl BarEditorApp {
                 if is_io_output {
                     continue;
                 }
-                let port_pos = node_port_pos(&node_type, node_rect, PortPlacement::Right, i);
+                let port_pos = node_port_pos(&node_type, node_rect, PortPlacement::Right, i, zoom);
                 let port_color = port_kind_color(&output.kind);
                 let hit_rect = egui::Rect::from_center_size(port_pos, hit_size);
                 let port_resp = ui.interact(
@@ -1068,10 +1111,10 @@ impl BarEditorApp {
                 );
                 if !is_io {
                     painter.text(
-                        egui::pos2(port_pos.x - 10.0, port_pos.y),
+                        egui::pos2(port_pos.x - 10.0 * zoom, port_pos.y),
                         egui::Align2::RIGHT_CENTER,
                         &output.label,
-                        egui::FontId::proportional(10.0),
+                        egui::FontId::proportional(10.0 * zoom),
                         port_label_col,
                     );
                 }
@@ -1092,7 +1135,7 @@ impl BarEditorApp {
 
             // PassThrough: draw file hierarchy in node body
             if let Some(ref files) = passthrough_files {
-                draw_passthrough_body(&painter, node_rect, files);
+                draw_passthrough_body(&painter, node_rect, files, zoom);
             }
 
             // Export / Compile / Test-in-BAR actions live on the
@@ -1319,8 +1362,9 @@ impl BarEditorApp {
             // node-body button to dispatch from here.
 
             // Resize corner handles (8 px squares; processed after node interact so they
-            // are "on top" in egui's interaction stack)
-            let handle_sz = 8.0_f32;
+            // are "on top" in egui's interaction stack). Scaled by zoom so
+            // the grab squares track the node's painted corners.
+            let handle_sz = 8.0_f32 * zoom;
             let corners: [(i8, i8); 4] = [(-1, -1), (1, -1), (-1, 1), (1, 1)];
             let mut any_resize = false;
             for (cx, cy) in corners {
@@ -1359,7 +1403,9 @@ impl BarEditorApp {
                 }
                 if handle_resp.dragged() {
                     any_resize = true;
-                    let delta = handle_resp.drag_delta();
+                    // drag_delta is in screen pixels; node size/position
+                    // are world units, so convert by dividing by zoom.
+                    let delta = handle_resp.drag_delta() / zoom;
                     if let Some(v) = self.visuals.node_visuals.get_mut(node_id) {
                         if cx == 1 {
                             v.size.x = (v.size.x + delta.x).max(node_min_w);
@@ -1386,7 +1432,8 @@ impl BarEditorApp {
             // selection, every selected node moves by the same delta
             // — same shortcut as Photoshop / Figma / Blender.
             if node_response.dragged() && !any_resize {
-                let delta = node_response.drag_delta();
+                // Screen-space drag → world-space node movement.
+                let delta = node_response.drag_delta() / zoom;
                 if self.selection.nodes.contains(node_id) && self.selection.nodes.len() > 1 {
                     let to_move: Vec<NodeId> = self.selection.nodes.iter().copied().collect();
                     for id in to_move {
@@ -1418,7 +1465,7 @@ impl BarEditorApp {
         // nodes (so they appear in the foreground). They handle their
         // own selection / double-click-to-enter-confined-mode.
         let (subgraph_block_rects, _subgraph_handle_positions, sg_conn_start, sg_conn_end) =
-            self.draw_collapsed_subgraphs(ui, offset);
+            self.draw_collapsed_subgraphs(ui, offset, zoom);
         if let Some(s) = sg_conn_start {
             connection_start = Some(s);
         }
@@ -1449,7 +1496,8 @@ impl BarEditorApp {
             // by the same delta — same affordance as dragging the
             // expanded group's title bar.
             if resp.dragged() {
-                let delta = resp.drag_delta();
+                // Screen-space drag → world-space member movement.
+                let delta = resp.drag_delta() / zoom;
                 if let Some(g) = self.visuals.groups.get(&gid) {
                     let ids: Vec<NodeId> = g.member_ids.iter().copied().collect();
                     for id in ids {
@@ -1562,10 +1610,7 @@ impl BarEditorApp {
                 let Some(visual) = self.visuals.node_visuals.get(nid) else {
                     continue;
                 };
-                let centre = egui::pos2(
-                    visual.position.x + visual.size.x * 0.5 + offset.x,
-                    visual.position.y + visual.size.y * 0.5 + offset.y,
-                );
+                let centre = to_screen(visual.position + visual.size * 0.5);
                 let landed_in = group_rects
                     .iter()
                     .find(|(_, r)| r.contains(centre))
@@ -1597,10 +1642,7 @@ impl BarEditorApp {
                 let Some(visual) = self.visuals.node_visuals.get(&nid) else {
                     continue;
                 };
-                let centre = egui::pos2(
-                    visual.position.x + visual.size.x * 0.5 + offset.x,
-                    visual.position.y + visual.size.y * 0.5 + offset.y,
-                );
+                let centre = to_screen(visual.position + visual.size * 0.5);
                 let landed_in = group_rects
                     .iter()
                     .find(|(_, r)| r.contains(centre))

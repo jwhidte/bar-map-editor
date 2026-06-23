@@ -25,7 +25,7 @@ impl BarEditorApp {
     /// bounding box is the union of the member nodes' rects, expanded
     /// by a margin so the group reads as a frame around them rather
     /// than touching their edges.
-    pub(crate) fn draw_groups(&mut self, painter: &egui::Painter, offset: egui::Vec2) {
+    pub(crate) fn draw_groups(&mut self, painter: &egui::Painter, offset: egui::Vec2, zoom: f32) {
         // Reset cached header/body rects each frame; we repopulate as
         // we draw. Hit-testing in the click pass below uses these.
         self.visuals.group_header_rects.clear();
@@ -36,8 +36,8 @@ impl BarEditorApp {
         if matches!(self.current_view(), CanvasView::SubGraph(_)) {
             return;
         }
-        let margin = 14.0_f32;
-        let header_h = 20.0_f32;
+        let margin = 14.0_f32 * zoom;
+        let header_h = 20.0_f32 * zoom;
         for (gid, group) in &self.visuals.groups {
             // Collapsed subgraphs draw as a compact block in a
             // separate pass after nodes (so they render on top, like
@@ -52,8 +52,11 @@ impl BarEditorApp {
                 let Some(visual) = self.visuals.node_visuals.get(nid) else {
                     continue;
                 };
-                let p0 = egui::pos2(visual.position.x + offset.x, visual.position.y + offset.y);
-                let p1 = egui::pos2(p0.x + visual.size.x, p0.y + visual.size.y);
+                let p0 = egui::pos2(
+                    visual.position.x * zoom + offset.x,
+                    visual.position.y * zoom + offset.y,
+                );
+                let p1 = egui::pos2(p0.x + visual.size.x * zoom, p0.y + visual.size.y * zoom);
                 min = Some(match min {
                     Some(m) => egui::pos2(m.x.min(p0.x), m.y.min(p0.y)),
                     None => p0,
@@ -113,10 +116,10 @@ impl BarEditorApp {
                 group.label.clone()
             };
             painter.text(
-                egui::pos2(rect.left() + 8.0, header_rect.center().y),
+                egui::pos2(rect.left() + 8.0 * zoom, header_rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 label_text,
-                egui::FontId::proportional(11.5),
+                egui::FontId::proportional(11.5 * zoom),
                 egui::Color32::WHITE,
             );
             // Body rect = full minus header, for click hit-testing.
@@ -211,6 +214,7 @@ impl BarEditorApp {
     pub(crate) fn collapsed_subgraph_layout(
         &self,
         offset: egui::Vec2,
+        zoom: f32,
     ) -> (
         HashMap<u64, egui::Rect>,
         HashMap<(NodeId, String), egui::Pos2>,
@@ -220,9 +224,13 @@ impl BarEditorApp {
         if matches!(self.current_view(), CanvasView::SubGraph(_)) {
             return (rects, handles);
         }
-        let block_w = 180.0_f32;
-        let header_h = 22.0_f32;
-        let row_h = 18.0_f32;
+        // Block geometry is fixed in world units, scaled to screen by
+        // zoom — must match `draw_collapsed_subgraphs` exactly so the
+        // rerouted-wire handle positions land on the painted ports.
+        let block_w = 180.0_f32 * zoom;
+        let header_h = 22.0_f32 * zoom;
+        let row_h = 18.0_f32 * zoom;
+        let port_inset = 8.0_f32 * zoom;
         for (gid, group) in &self.visuals.groups {
             if !(group.is_subgraph && group.collapsed) {
                 continue;
@@ -232,8 +240,8 @@ impl BarEditorApp {
             let mut n = 0_f32;
             for nid in &group.member_ids {
                 if let Some(v) = self.visuals.node_visuals.get(nid) {
-                    cx += v.position.x + v.size.x * 0.5 + offset.x;
-                    cy += v.position.y + v.size.y * 0.5 + offset.y;
+                    cx += (v.position.x + v.size.x * 0.5) * zoom + offset.x;
+                    cy += (v.position.y + v.size.y * 0.5) * zoom + offset.y;
                     n += 1.0;
                 }
             }
@@ -246,20 +254,20 @@ impl BarEditorApp {
                 .subgraph_inputs
                 .len()
                 .max(group.subgraph_outputs.len());
-            let block_h = header_h + (rows.max(1) as f32) * row_h + 10.0;
+            let block_h = header_h + (rows.max(1) as f32) * row_h + 10.0 * zoom;
             let rect = egui::Rect::from_min_size(
                 egui::pos2(centre.x - block_w * 0.5, centre.y - block_h * 0.5),
                 egui::vec2(block_w, block_h),
             );
             for (i, port) in group.subgraph_inputs.iter().enumerate() {
-                let y = rect.top() + header_h + 8.0 + i as f32 * row_h;
+                let y = rect.top() + header_h + port_inset + i as f32 * row_h;
                 let p = egui::pos2(rect.left(), y);
                 if let Some((nid, pname)) = &port.binding {
                     handles.insert((*nid, pname.clone()), p);
                 }
             }
             for (i, port) in group.subgraph_outputs.iter().enumerate() {
-                let y = rect.top() + header_h + 8.0 + i as f32 * row_h;
+                let y = rect.top() + header_h + port_inset + i as f32 * row_h;
                 let p = egui::pos2(rect.right(), y);
                 if let Some((nid, pname)) = &port.binding {
                     handles.insert((*nid, pname.clone()), p);
@@ -279,6 +287,7 @@ impl BarEditorApp {
         &mut self,
         ui: &mut egui::Ui,
         offset: egui::Vec2,
+        zoom: f32,
     ) -> CollapsedSubgraphsDraw {
         // Reset the cached collapsed-block rects every frame; we
         // refill below as each block is drawn so the props-popup
@@ -308,9 +317,12 @@ impl BarEditorApp {
                 vis.strong_text_color(),
             )
         };
-        let block_w = 180.0_f32;
-        let header_h = 22.0_f32;
-        let row_h = 18.0_f32;
+        // Must mirror `collapsed_subgraph_layout` exactly (scaled by
+        // zoom) so the wire-reroute handles align with these ports.
+        let block_w = 180.0_f32 * zoom;
+        let header_h = 22.0_f32 * zoom;
+        let row_h = 18.0_f32 * zoom;
+        let port_inset = 8.0_f32 * zoom;
         for (gid, group) in &self.visuals.groups {
             if !(group.is_subgraph && group.collapsed) {
                 continue;
@@ -321,8 +333,8 @@ impl BarEditorApp {
             let mut n = 0_f32;
             for nid in &group.member_ids {
                 if let Some(v) = self.visuals.node_visuals.get(nid) {
-                    cx += v.position.x + v.size.x * 0.5 + offset.x;
-                    cy += v.position.y + v.size.y * 0.5 + offset.y;
+                    cx += (v.position.x + v.size.x * 0.5) * zoom + offset.x;
+                    cy += (v.position.y + v.size.y * 0.5) * zoom + offset.y;
                     n += 1.0;
                 }
             }
@@ -335,7 +347,7 @@ impl BarEditorApp {
                 .subgraph_inputs
                 .len()
                 .max(group.subgraph_outputs.len());
-            let block_h = header_h + (rows.max(1) as f32) * row_h + 10.0;
+            let block_h = header_h + (rows.max(1) as f32) * row_h + 10.0 * zoom;
             let rect = egui::Rect::from_min_size(
                 egui::pos2(centre.x - block_w * 0.5, centre.y - block_h * 0.5),
                 egui::vec2(block_w, block_h),
@@ -367,10 +379,10 @@ impl BarEditorApp {
                 group.label.clone()
             };
             painter.text(
-                egui::pos2(rect.left() + 10.0, header_rect.center().y),
+                egui::pos2(rect.left() + 10.0 * zoom, header_rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 label_text,
-                egui::FontId::proportional(12.0),
+                egui::FontId::proportional(12.0 * zoom),
                 egui::Color32::WHITE,
             );
             // Border last so the header doesn't cover it (matches
@@ -386,9 +398,9 @@ impl BarEditorApp {
             // the right. The actual wiring of these handles to the
             // surrounding graph lands in the next phase along with
             // subgraph eval.
-            let hit_size = egui::vec2(14.0, 14.0);
+            let hit_size = egui::Vec2::splat((14.0 * zoom).max(10.0));
             for (i, port) in group.subgraph_inputs.iter().enumerate() {
-                let y = rect.top() + header_h + 8.0 + i as f32 * row_h;
+                let y = rect.top() + header_h + port_inset + i as f32 * row_h;
                 let p = egui::pos2(rect.left(), y);
                 let port_resp = ui.interact(
                     egui::Rect::from_center_size(p, hit_size),
@@ -398,15 +410,15 @@ impl BarEditorApp {
                 draw_port_circle(
                     &painter,
                     p,
-                    4.0,
+                    4.0 * zoom,
                     tokens::PORT_HEIGHTMAP,
                     port_resp.hovered(),
                 );
                 painter.text(
-                    egui::pos2(p.x + 8.0, p.y),
+                    egui::pos2(p.x + 8.0 * zoom, p.y),
                     egui::Align2::LEFT_CENTER,
                     &port.label,
-                    egui::FontId::proportional(11.0),
+                    egui::FontId::proportional(11.0 * zoom),
                     sg_label_col,
                 );
                 if let Some((nid, pname)) = &port.binding {
@@ -420,7 +432,7 @@ impl BarEditorApp {
                 }
             }
             for (i, port) in group.subgraph_outputs.iter().enumerate() {
-                let y = rect.top() + header_h + 8.0 + i as f32 * row_h;
+                let y = rect.top() + header_h + port_inset + i as f32 * row_h;
                 let p = egui::pos2(rect.right(), y);
                 let port_resp = ui.interact(
                     egui::Rect::from_center_size(p, hit_size),
@@ -430,15 +442,15 @@ impl BarEditorApp {
                 draw_port_circle(
                     &painter,
                     p,
-                    4.0,
+                    4.0 * zoom,
                     tokens::PORT_HEIGHTMAP,
                     port_resp.hovered(),
                 );
                 painter.text(
-                    egui::pos2(p.x - 8.0, p.y),
+                    egui::pos2(p.x - 8.0 * zoom, p.y),
                     egui::Align2::RIGHT_CENTER,
                     &port.label,
-                    egui::FontId::proportional(11.0),
+                    egui::FontId::proportional(11.0 * zoom),
                     sg_label_col,
                 );
                 if let Some((nid, pname)) = &port.binding {

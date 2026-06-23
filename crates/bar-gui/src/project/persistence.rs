@@ -370,6 +370,7 @@ impl BarEditorApp {
                 node_positions: layout_positions,
                 node_sizes: layout_sizes,
                 canvas_offset: (self.canvas.offset.x, self.canvas.offset.y),
+                canvas_zoom: self.canvas.zoom,
                 groups: self
                     .visuals
                     .groups
