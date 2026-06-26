@@ -154,9 +154,21 @@ impl BarEditorApp {
         let pressed = ctx.input(|i| i.pointer.any_pressed());
         let pointer = ctx.pointer_interact_pos();
         if pressed {
-            let inside_panel = pointer.map(|p| panel_rect.contains(p)).unwrap_or(false);
-            if !inside_panel {
-                close_panel = true;
+            if let Some(p) = pointer {
+                let inside_panel = panel_rect.contains(p);
+                // A press outside the panel that lands on the bare canvas
+                // (background layer) is a genuine dismiss. One that lands
+                // on another floating layer is not -- most importantly an
+                // open ComboBox/menu popup opened from a widget *inside*
+                // the panel, which egui renders in its own foreground area
+                // outside the panel's rect. Without this guard, picking a
+                // dropdown value would close the panel mid-edit.
+                let on_background = ctx
+                    .layer_id_at(p)
+                    .is_none_or(|layer| layer.order == egui::Order::Background);
+                if !inside_panel && on_background {
+                    close_panel = true;
+                }
             }
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -191,11 +203,8 @@ impl BarEditorApp {
                 continue;
             }
             let rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    visual.position.x + self.canvas.offset.x,
-                    visual.position.y + self.canvas.offset.y,
-                ),
-                visual.size,
+                self.canvas.to_screen(visual.position),
+                visual.size * self.canvas.zoom,
             );
             if rect.contains(p) {
                 return Some(PropsTarget::Node(*id));
@@ -225,11 +234,8 @@ impl BarEditorApp {
             PropsTarget::Node(id) => {
                 let v = self.visuals.node_visuals.get(id)?;
                 Some(egui::Rect::from_min_size(
-                    egui::pos2(
-                        v.position.x + self.canvas.offset.x,
-                        v.position.y + self.canvas.offset.y,
-                    ),
-                    v.size,
+                    self.canvas.to_screen(v.position),
+                    v.size * self.canvas.zoom,
                 ))
             }
             PropsTarget::Group(gid) => {

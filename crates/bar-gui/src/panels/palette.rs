@@ -173,120 +173,130 @@ pub(crate) fn draw(app: &mut BarEditorApp, ui: &mut egui::Ui) {
 
     let filter = app.palette_filter.to_lowercase();
 
-    macro_rules! palette_group {
-        ($ui:expr, $title:expr, $items:expr) => {
-            $ui.collapsing($title, |ui| {
-                for (label, node_type) in &$items {
-                    let resp = palette_item(ui, label, node_type);
-                    if resp.drag_started() && drag_start.is_none() {
-                        drag_start = Some(PaletteDrag {
-                            kind: PaletteKind::Node(node_type.clone()),
-                            label: label.to_string(),
-                        });
-                    }
-                    if resp.double_clicked() {
-                        to_add = Some((node_type.clone(), label.to_string()));
-                    }
-                }
-            });
-        };
-    }
-
-    if !filter.is_empty() {
-        // Flat filtered list -- categories are suppressed.
-        let mut any = false;
-        for (label, node_type) in all_nodes {
-            if label.to_lowercase().contains(&filter) {
-                let resp = palette_item(ui, label, node_type);
-                if resp.drag_started() && drag_start.is_none() {
-                    drag_start = Some(PaletteDrag {
-                        kind: PaletteKind::Node((*node_type).clone()),
-                        label: label.to_string(),
+    // The category tree (or filtered list) scrolls independently so a
+    // fully-expanded palette stays reachable; the search box above stays
+    // pinned. `auto_shrink` off so the scroll area claims the full
+    // remaining sidebar height regardless of content size.
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            macro_rules! palette_group {
+                ($ui:expr, $title:expr, $items:expr) => {
+                    $ui.collapsing($title, |ui| {
+                        for (label, node_type) in &$items {
+                            let resp = palette_item(ui, label, node_type);
+                            if resp.drag_started() && drag_start.is_none() {
+                                drag_start = Some(PaletteDrag {
+                                    kind: PaletteKind::Node(node_type.clone()),
+                                    label: label.to_string(),
+                                });
+                            }
+                            if resp.double_clicked() {
+                                to_add = Some((node_type.clone(), label.to_string()));
+                            }
+                        }
                     });
-                }
-                if resp.double_clicked() {
-                    to_add = Some(((*node_type).clone(), label.to_string()));
-                }
-                any = true;
+                };
             }
-        }
-        // Also search macros.
-        for group in crate::macros::BUILTIN_MACRO_GROUPS {
-            for entry in group.entries {
-                let full = format!("{} {}", group.name, entry.display_name).to_lowercase();
-                if full.contains(&filter) || entry.display_name.to_lowercase().contains(&filter) {
-                    let resp = ui.add(
-                        egui::Label::new(entry.display_name)
-                            .sense(egui::Sense::click_and_drag())
-                            .selectable(false),
-                    );
-                    if resp.drag_started() && drag_start.is_none() {
-                        drag_start = Some(PaletteDrag {
-                            kind: PaletteKind::Macro {
-                                name: entry.full_name.to_string(),
-                            },
-                            label: format!("{} - {}", group.name, entry.display_name),
-                        });
-                    }
-                    any = true;
-                }
-            }
-        }
-        if !any {
-            ui.label(
-                egui::RichText::new("No matches")
-                    .color(ui.visuals().weak_text_color())
-                    .italics(),
-            );
-        }
-    } else {
-        // Normal category tree.
 
-        // SubGraph IO nodes -- only meaningful inside a subgraph view.
-        // Pinned to the TOP of the palette (above Generators) since
-        // they're how a subgraph's external interface is now defined.
-        if app.is_in_subgraph_view() {
-            let subgraph_io = [
-                ("Subgraph Input", NodeType::SubgraphInput),
-                ("Subgraph Output", NodeType::SubgraphOutput),
-            ];
-            palette_group!(ui, "SubGraph IO", subgraph_io);
-            ui.add_space(8.0);
-        }
-
-        palette_group!(ui, "Generators", generators);
-        palette_group!(ui, "Filters", filters);
-        palette_group!(ui, "Combiners", combiners);
-        palette_group!(ui, "Colorizers", colorizers);
-        palette_group!(ui, "Splat / Maps", splat_maps);
-        palette_group!(ui, "Masks", masks);
-        palette_group!(ui, "Sources", sources);
-
-        // Macros -- pre-built SubGraphs that drop as a complete chunk
-        // of graph wired up for a typical map archetype. Drop one and
-        // wire it into Final Composition's inputs.
-        ui.collapsing("Macros", |ui| {
-            for group in crate::macros::BUILTIN_MACRO_GROUPS {
-                ui.collapsing(group.name, |ui| {
-                    for entry in group.entries {
-                        let resp = ui.add(
-                            egui::Label::new(entry.display_name)
-                                .sense(egui::Sense::click_and_drag())
-                                .selectable(false),
-                        );
+            if !filter.is_empty() {
+                // Flat filtered list -- categories are suppressed.
+                let mut any = false;
+                for (label, node_type) in all_nodes {
+                    if label.to_lowercase().contains(&filter) {
+                        let resp = palette_item(ui, label, node_type);
                         if resp.drag_started() && drag_start.is_none() {
                             drag_start = Some(PaletteDrag {
-                                kind: PaletteKind::Macro {
-                                    name: entry.full_name.to_string(),
-                                },
-                                label: format!("{} - {}", group.name, entry.display_name),
+                                kind: PaletteKind::Node((*node_type).clone()),
+                                label: label.to_string(),
                             });
                         }
+                        if resp.double_clicked() {
+                            to_add = Some(((*node_type).clone(), label.to_string()));
+                        }
+                        any = true;
+                    }
+                }
+                // Also search macros.
+                for group in crate::macros::BUILTIN_MACRO_GROUPS {
+                    for entry in group.entries {
+                        let full = format!("{} {}", group.name, entry.display_name).to_lowercase();
+                        if full.contains(&filter)
+                            || entry.display_name.to_lowercase().contains(&filter)
+                        {
+                            let resp = ui.add(
+                                egui::Label::new(entry.display_name)
+                                    .sense(egui::Sense::click_and_drag())
+                                    .selectable(false),
+                            );
+                            if resp.drag_started() && drag_start.is_none() {
+                                drag_start = Some(PaletteDrag {
+                                    kind: PaletteKind::Macro {
+                                        name: entry.full_name.to_string(),
+                                    },
+                                    label: format!("{} - {}", group.name, entry.display_name),
+                                });
+                            }
+                            any = true;
+                        }
+                    }
+                }
+                if !any {
+                    ui.label(
+                        egui::RichText::new("No matches")
+                            .color(ui.visuals().weak_text_color())
+                            .italics(),
+                    );
+                }
+            } else {
+                // Normal category tree.
+
+                // SubGraph IO nodes -- only meaningful inside a subgraph view.
+                // Pinned to the TOP of the palette (above Generators) since
+                // they're how a subgraph's external interface is now defined.
+                if app.is_in_subgraph_view() {
+                    let subgraph_io = [
+                        ("Subgraph Input", NodeType::SubgraphInput),
+                        ("Subgraph Output", NodeType::SubgraphOutput),
+                    ];
+                    palette_group!(ui, "SubGraph IO", subgraph_io);
+                    ui.add_space(8.0);
+                }
+
+                palette_group!(ui, "Generators", generators);
+                palette_group!(ui, "Filters", filters);
+                palette_group!(ui, "Combiners", combiners);
+                palette_group!(ui, "Colorizers", colorizers);
+                palette_group!(ui, "Splat / Maps", splat_maps);
+                palette_group!(ui, "Masks", masks);
+                palette_group!(ui, "Sources", sources);
+
+                // Macros -- pre-built SubGraphs that drop as a complete chunk
+                // of graph wired up for a typical map archetype. Drop one and
+                // wire it into Final Composition's inputs.
+                ui.collapsing("Macros", |ui| {
+                    for group in crate::macros::BUILTIN_MACRO_GROUPS {
+                        ui.collapsing(group.name, |ui| {
+                            for entry in group.entries {
+                                let resp = ui.add(
+                                    egui::Label::new(entry.display_name)
+                                        .sense(egui::Sense::click_and_drag())
+                                        .selectable(false),
+                                );
+                                if resp.drag_started() && drag_start.is_none() {
+                                    drag_start = Some(PaletteDrag {
+                                        kind: PaletteKind::Macro {
+                                            name: entry.full_name.to_string(),
+                                        },
+                                        label: format!("{} - {}", group.name, entry.display_name),
+                                    });
+                                }
+                            }
+                        });
                     }
                 });
             }
-        });
-    }
+        }); // end ScrollArea
 
     if let Some(pd) = drag_start {
         app.set_palette_drag(pd);

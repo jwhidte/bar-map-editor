@@ -115,11 +115,9 @@ impl CanvasState {
 
     /// Set zoom to `target` (clamped to [`MIN_ZOOM`, `MAX_ZOOM`]) while
     /// keeping the world point under `anchor` (a screen position) fixed
-    /// on screen. This is the one place the zoom↔pan relationship lives:
-    /// from `screen = world*zoom + offset`, holding `world` and the
-    /// anchor's `screen` fixed gives `offset += world * (old - new)`.
-    /// Scroll-zoom and reset both go through here so the anchor rule is
-    /// identical for both.
+    /// on screen. Scroll-wheel zoom calls this with the cursor as the
+    /// anchor. From `screen = world*zoom + offset`, holding `world` and
+    /// the anchor's `screen` fixed gives `offset += world * (old - new)`.
     pub fn zoom_to(&mut self, anchor: egui::Pos2, target: f32) {
         let old = self.zoom;
         let new = target.clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
@@ -175,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_zoom_returns_to_one_and_holds_anchor() {
+    fn zoom_to_one_holds_anchor() {
         let mut state = CanvasState {
             offset: egui::vec2(-30.0, 200.0),
             zoom: 2.2,
@@ -185,10 +183,26 @@ mod tests {
         let world_under_anchor = state.to_world(anchor);
         state.zoom_to(anchor, 1.0);
         assert_eq!(state.zoom, 1.0);
-        // Whatever was under the anchor (e.g. the viewport centre) stays
-        // under it after the reset.
+        // Whatever was under the anchor stays under it.
         let after = state.to_screen(world_under_anchor);
         assert!((after - anchor).length() < 1e-3, "{after:?} != {anchor:?}");
+    }
+
+    #[test]
+    fn reset_holds_viewport_centre_at_unit_zoom() {
+        // `0` resets via `zoom_to(centre, 1.0)`: the world point at the
+        // screen centre stays there and zoom normalises to 1.0 — the view
+        // does not jump to the graph's location.
+        let mut state = CanvasState {
+            offset: egui::vec2(-30.0, 200.0),
+            zoom: 2.2,
+            ..Default::default()
+        };
+        let centre = egui::pos2(640.0, 360.0);
+        let world_at_centre = state.to_world(centre);
+        state.zoom_to(centre, 1.0);
+        assert_eq!(state.zoom, 1.0);
+        assert!((state.to_screen(world_at_centre) - centre).length() < 1e-3);
     }
 
     #[test]

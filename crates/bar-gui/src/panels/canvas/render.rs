@@ -103,7 +103,12 @@ impl BarEditorApp {
             |world: egui::Pos2| egui::pos2(world.x * zoom + offset.x, world.y * zoom + offset.y);
 
         // Draw grid. Spacing scales with zoom so the backdrop reads as
-        // part of the zoomed content rather than a fixed overlay.
+        // part of the zoomed content. The lines are anchored to graph
+        // space — they sit at screen positions `offset + n*spacing`
+        // (i.e. fixed world coordinates) rather than being phased off the
+        // canvas's left/top edge. That keeps every line locked to the
+        // same graph coordinate, so the grid tracks the nodes under pan
+        // AND zoom instead of sliding as the spacing changes.
         let grid_spacing = 30.0 * zoom;
         let grid_color = ui
             .visuals()
@@ -113,10 +118,10 @@ impl BarEditorApp {
             .color
             .linear_multiply(0.2);
 
-        let grid_offset_x = offset.x % grid_spacing;
-        let grid_offset_y = offset.y % grid_spacing;
-
-        let mut x = canvas_rect.left() + grid_offset_x;
+        // First line at or left of the canvas edge, aligned to world.
+        let first_x =
+            offset.x + ((canvas_rect.left() - offset.x) / grid_spacing).floor() * grid_spacing;
+        let mut x = first_x;
         while x <= canvas_rect.right() {
             painter.line_segment(
                 [
@@ -127,7 +132,9 @@ impl BarEditorApp {
             );
             x += grid_spacing;
         }
-        let mut y = canvas_rect.top() + grid_offset_y;
+        let first_y =
+            offset.y + ((canvas_rect.top() - offset.y) / grid_spacing).floor() * grid_spacing;
+        let mut y = first_y;
         while y <= canvas_rect.bottom() {
             painter.line_segment(
                 [
@@ -146,22 +153,28 @@ impl BarEditorApp {
             self.canvas.offset += response.drag_delta();
         }
 
-        // Scroll-wheel zoom and `0`-to-reset, both anchored on the
-        // viewport centre so the graph scales symmetrically in place
-        // rather than drifting toward the cursor or a stale pan. A
-        // per-notch factor clamped to a gentle range keeps perceived
-        // speed even across zoom levels. The new zoom takes effect next
-        // frame (same one-frame lag as the pan above, which captured
-        // `offset`/`zoom` before this block).
+        // Scroll-wheel zoom anchored on the cursor, so the point under
+        // the pointer stays put as you zoom (the standard node-editor
+        // feel). A per-notch factor clamped to a gentle range keeps
+        // perceived speed even across zoom levels. `0` resets to a 1:1
+        // view with the graph re-centred in the middle of the screen,
+        // regardless of accumulated pan/zoom. The new zoom takes effect
+        // next frame (same one-frame lag as the pan above, which
+        // captured `offset`/`zoom` before this block).
         if response.hovered() {
-            let centre = canvas_rect.center();
             let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                let factor = (1.0 + scroll * 0.0015).clamp(0.7, 1.4);
-                self.canvas.zoom_to(centre, self.canvas.zoom * factor);
+                if let Some(cursor) = response.hover_pos() {
+                    let factor = (1.0 + scroll * 0.0015).clamp(0.7, 1.4);
+                    self.canvas.zoom_to(cursor, self.canvas.zoom * factor);
+                }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::Num0)) {
-                self.canvas.zoom_to(centre, 1.0);
+                // Reset zoom to 1:1 around the viewport centre: whatever
+                // is at the middle of the screen when you press the key
+                // stays there, the zoom just normalises. It does NOT jump
+                // the view to the graph's location.
+                self.canvas.zoom_to(canvas_rect.center(), 1.0);
             }
         }
 
@@ -1174,17 +1187,26 @@ impl BarEditorApp {
                     }
                 }
             }
-            // Double-click a Layout node to descend into its bespoke
-            // edit view (mirrors double-click-to-enter for subgraphs).
-            if node_response.double_clicked()
-                && self
+            // Double-click opens the node for editing. A Layout node
+            // descends into its bespoke full-canvas edit view (mirrors
+            // double-click-to-enter for subgraphs); every other node
+            // opens its contextual properties panel immediately — no
+            // hover gate — so double-click is a reliable "edit this node".
+            if node_response.double_clicked() {
+                let is_layout = self
                     .graph
                     .get_node(*node_id)
-                    .is_some_and(|n| n.node_type == NodeType::Layout)
-            {
-                self.open_or_activate_tab(CanvasView::NodeEdit(*node_id));
-                self.clear_selection();
-                self.props.close();
+                    .is_some_and(|n| n.node_type == NodeType::Layout);
+                if is_layout {
+                    self.open_or_activate_tab(CanvasView::NodeEdit(*node_id));
+                    self.clear_selection();
+                    self.props.close();
+                } else {
+                    new_selection = Some((*node_id, false));
+                    self.props.active = Some(PropsTarget::Node(*node_id));
+                }
+                // Either way, drop any gated single-click arm from this
+                // same gesture so it can't fight the immediate open.
                 pending_props_clear = true;
             }
             // Drag-start on a node cancels any pending props popup —
